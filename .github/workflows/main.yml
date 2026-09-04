@@ -20,43 +20,104 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Find Android project
+      - name: Find Android ZIP
         shell: bash
         run: |
           set -e
 
-          PROJECT_DIR="$(find . -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -not -path './.git/*' -print -quit | xargs -r dirname)"
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: No Android Gradle project found."
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No Android project ZIP found in repository root."
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found Android project: $PROJECT_DIR"
+          echo "Found Android ZIP: $ZIP_FILE"
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
-      - name: Set up Gradle 8.9
+      - name: Extract Android project
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf android_project
+          mkdir -p android_project
+
+          unzip -q "$ZIP_FILE" -d android_project
+
+          echo "ZIP extracted successfully."
+
+          echo "Searching for Android Gradle project..."
+
+          PROJECT_DIR="$(
+            find "$GITHUB_WORKSPACE/android_project" \
+              -type f \
+              \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
+              -not -path '*/.gradle/*' \
+              -print -quit \
+            | xargs -r dirname
+          )"
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Android Gradle project was not found after extraction."
+            echo "Extracted files:"
+            find "$GITHUB_WORKSPACE/android_project" -maxdepth 3 -type f | head -100
+            exit 1
+          fi
+
+          echo "Android project found at: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Validate Android project
+      - name: Check Android project
         shell: bash
         run: |
           set -e
 
-          test -f "$PROJECT_DIR/settings.gradle.kts" || test -f "$PROJECT_DIR/settings.gradle"
-          test -f "$PROJECT_DIR/app/build.gradle.kts" || test -f "$PROJECT_DIR/app/build.gradle"
+          echo "Checking project..."
+
+          test -f "$PROJECT_DIR/settings.gradle" \
+            || test -f "$PROJECT_DIR/settings.gradle.kts"
+
+          test -f "$PROJECT_DIR/app/build.gradle" \
+            || test -f "$PROJECT_DIR/app/build.gradle.kts"
+
           test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml"
 
-          echo "Android project files found."
+          echo "Android project structure OK."
 
       - name: Build Debug APK
         shell: bash
         run: |
           set -e
 
-          gradle -p "$PROJECT_DIR" assembleDebug --stacktrace --no-daemon
+          echo "Building APK..."
+
+          gradle \
+            -p "$PROJECT_DIR" \
+            assembleDebug \
+            --stacktrace \
+            --no-daemon
+
+      - name: Find APK
+        shell: bash
+        run: |
+          set -e
+
+          APK_FILE="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" \
+            -type f -name '*.apk' -print -quit)"
+
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK generated:"
+          echo "$APK_FILE"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
