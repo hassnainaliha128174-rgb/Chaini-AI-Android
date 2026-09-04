@@ -1,0 +1,58 @@
+workflows:
+  chaini-android:
+    name: Chaini AI APK
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    scripts:
+      - name: Extract Android project
+        script: |
+          set -e
+
+          ZIP_FILE=$(find "$CM_BUILD_DIR" -maxdepth 1 -type f -iname "*.zip" | head -1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Android ZIP not found"
+            exit 1
+          fi
+
+          echo "Found: $ZIP_FILE"
+
+          mkdir -p "$CM_BUILD_DIR/android_project"
+          unzip -q -o "$ZIP_FILE" -d "$CM_BUILD_DIR/android_project"
+
+      - name: Locate Android project
+        script: |
+          set -e
+
+          PROJECT_DIR=$(find "$CM_BUILD_DIR/android_project" \
+            -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            -print -quit | xargs dirname)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Android Gradle project not found"
+            find "$CM_BUILD_DIR/android_project" -maxdepth 4 -type f
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$CM_ENV"
+
+      - name: Set Android SDK location
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$PROJECT_DIR/local.properties"
+
+      - name: Build Debug APK
+        script: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug
+          else
+            gradle assembleDebug
+          fi
+
+    artifacts:
+      - android_project/**/build/outputs/apk/debug/*.apk
